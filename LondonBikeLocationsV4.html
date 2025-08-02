@@ -1,0 +1,182 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>London Santander Bike Locations</title>
+  <script src="https://cdn.maptiler.com/maptiler-sdk-js/v3.2.0/maptiler-sdk.umd.min.js"></script>
+  <link href="https://cdn.maptiler.com/maptiler-sdk-js/v3.2.0/maptiler-sdk.css" rel="stylesheet" />
+  <style>
+    body {
+      margin: 0;
+      padding: 0;
+    }
+    #map {
+      position: absolute;
+      top: 0;
+      bottom: 0;
+      width: 100%;
+    }
+  </style>
+</head>
+<body>
+  <div id="map"></div>
+  <script>
+    maptilersdk.config.apiKey = 'BmnWxckqLnFp9MhF4ewg';
+    const map = new maptilersdk.Map({
+      container: 'map',
+      style: maptilersdk.MapStyle.BASIC,
+      center: [-0.118092, 51.509865],
+      zoom: 11,
+    });
+    
+    function fontColor(count) {
+
+      if (count == 0){
+        return 'red';
+      } else if (count > 0 && count < 5){
+        return 'orange';
+      } else {
+        return 'black';
+      }
+
+    };
+
+    map.on('load', async function () {
+      // Load icon
+      const image = await map.loadImage('Bikes.png');
+      map.addImage('Bike', image.data);
+      
+      const image2 = await map.loadImage('BikeO.png');
+      map.addImage('BikeO', image2.data);
+      
+      const image3 = await map.loadImage('BikeR.png');
+      map.addImage('BikeR', image3.data);
+
+      // Load GeoJSON
+      const geojson = await maptilersdk.data.get('01975fe3-ca1f-7eee-ad45-469c4ee08219');
+
+      // Add source and layer
+      map.addSource('bikes', {
+        type: 'geojson',
+        data: geojson,
+      });
+      
+      //map.addLayer({
+        //id: 'bikes',
+        //type: 'symbol',
+        //source: 'bikes',
+        //layout: {
+          //'icon-image': 'Bike',
+          //'icon-size': 0.25,
+        //},
+      //});
+
+      // Fetch TfL bike data
+      const bikesURL = "https://api.tfl.gov.uk/BikePoint";
+      fetch(bikesURL)
+        .then(res => res.json())
+        .then(data => {
+          const apiMap = {};
+          data.forEach(item => {
+            apiMap[item.id] = item;
+          });
+
+          // Merge data
+          geojson.features.forEach(feature => {
+            const match = apiMap[feature.properties.Id];
+            if (match) {
+              feature.properties = {
+                ...feature.properties,
+                id: match.id,
+                commonName: match.commonName,
+                additionalProperties: JSON.stringify(match.additionalProperties),
+              };
+            }
+          });
+
+          // Update map source
+          //map.getSource('bikes').setData(geojson);
+
+          // Click popup
+          map.on('click', 'bikes', function (e) {
+            const props = e.features[0].properties;
+            const name = props.commonName || "Unknown";
+
+            const additional = props.additionalProperties ? JSON.parse(props.additionalProperties) : [];
+            const findProp = (key) =>
+              additional.find(p => p.key === key)?.value || "N/A";
+
+            const bikes = findProp("NbStandardBikes");
+            const ebikes = findProp("NbEBikes");
+            const emptyDocks = findProp("NbEmptyDocks");
+            
+            const bikesFontColor = fontColor(bikes);
+            const ebikesFontColor = fontColor(ebikes);
+            const emptyDocksFontColor = fontColor(emptyDocks);
+            
+            const iconCount = Math.min(bikes, ebikes, emptyDocks);
+            const iconColor = fontColor(iconCount);
+
+            new maptilersdk.Popup()
+              .setLngLat(e.lngLat)
+              .setHTML(`
+                <strong>${name}</strong><br>
+                🚲 Available Standard Bikes: <span style="color: ${bikesFontColor}"><strong>${bikes}</strong></span><br>
+                ⚡ Available eBikes: <span style="color: ${ebikesFontColor}"><strong>${ebikes}</strong></span><br>
+                🅿️ Empty Docks:<span style="color: ${emptyDocksFontColor}"><strong>${emptyDocks}</strong></span>
+              `)
+              .addTo(map);
+          });
+          
+          geojson.features.forEach(feature => {
+            const match = apiMap[feature.properties.Id];
+            if (match) {
+              const props = feature.properties;
+              const additional = match.additionalProperties;
+
+              const getValue = (key) =>
+                parseInt(additional.find(p => p.key === key)?.value || "0");
+
+              props.commonName = match.commonName;
+              props.num_bikes_available = getValue("NbStandardBikes");
+              props.num_ebikes_available = getValue("NbEBikes");
+              props.num_docks_available = getValue("NbEmptyDocks");
+
+              // Now compute icon color
+              const iconCount = Math.min(
+              props.num_bikes_available,
+              props.num_ebikes_available,
+              props.num_docks_available
+              );
+              props.iconColor = fontColor(iconCount);
+            }
+          });
+
+          
+          // Update map source
+          map.getSource('bikes').setData(geojson);
+          
+          map.addLayer({
+            id: 'bikes',
+            type: 'symbol',
+            source: 'bikes',
+            layout: {
+              'icon-image': ['match', ['get', 'iconColor'],
+                'red', 'BikeR',
+                'orange', 'BikeO',
+                'black', 'Bike',
+                /* fallback icon */ 'Bike'
+              ],
+              'icon-size': 0.25,
+            },
+          });
+        })
+        .catch(err => {
+          console.error("Error fetching bike data:", err);
+        });
+    });
+  </script>
+</body>
+</html>
